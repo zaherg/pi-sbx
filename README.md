@@ -13,6 +13,7 @@ Your settings, extensions and MCP configuration come along; real model credentia
   Run `sbx secret import openrouter` to import `OPENROUTER_API_KEY` from your shell, or `sbx secret set openrouter` to enter it interactively.
   The launcher checks for the stored key before creating or replacing a sandbox; it never imports or replaces it automatically.
 - For web search, the executor MCP server and TypeSafe, `BRAVE_API_KEY`, `FIRECRAWL_API_KEY`, `EXECUTOR_API_KEY` and `TYPESAFE_API_KEY` set in your shell the first time you run the kit.
+- No stored GitHub credential and no SSH agent forwarding, which `sbx` would give every sandbox: `sbx secret rm github` and `sbx settings set ssh.agentForwardingEnabled false`.
 
 ## Run
 
@@ -34,8 +35,9 @@ SANDBOX=name pi-sbx                   # choose the sandbox name outright
 
 An existing sandbox is re-attached as it is, without syncing.
 Kit content, credentials and workspaces are fixed when a sandbox is created, so use `--fresh` after changing settings.
-Sandbox setup installs the latest Node 24.x release and refuses to continue if the active Node version is below 24.
-The kit sets an `8g` memory limit for the whole sandbox through `sandbox.resources.memory`.
+Sandbox setup installs the pinned Node 26.13.0 (`n@11.0.0`); bump both pins together in `spec.yaml`.
+The kit sets a `4g` memory limit for the whole sandbox through `sandbox.resources.memory`.
+Measured peak use is 2.3 GB during the first start and 1.2 GB afterwards; `2g` was OOM-killed.
 Creating a sandbox takes about two minutes the first time pi starts in it, because pi installs the packages listed in `settings.json` (Linux builds).
 Without existing approvals, the first interactive create asks you to approve the ChatGPT login and OpenRouter key.
 `sbx` records these approvals in `~/.config/sbx/credentials.yaml`; both are already present on this Mac.
@@ -60,13 +62,32 @@ The binding file contains approvals, not secret values; keep it mode `0600`.
 
 1. Checks the host-side custom secrets described below and registers any that are missing or out of date.
 2. Re-attaches if the sandbox exists, unless `--fresh` was given.
-3. Otherwise requires the stored OpenRouter key before removing an existing sandbox, runs `sync.sh`, validates the kit, and creates the sandbox with `sbx run --name <name> <kit> [workspace]`.
+3. Otherwise runs the [safety checks](#safety-checks) and requires the stored OpenRouter key before removing an existing sandbox, runs `sync.sh`, validates the kit, and creates the sandbox with `sbx run --name <name> <kit> <workspace>`.
 
 The kit goes in the agent position: it is a `kind: sandbox` kit, and `--kit` only takes mixins.
 
 Pi starts with `--approve`, so trust-gated project-local configuration and resources load without an interactive prompt.
-The agent's npm configuration sets `ignore-scripts=false`, allowing dependency lifecycle scripts.
 Only mount projects and install packages whose code you trust to run inside the sandbox.
+
+### npm install scripts
+
+npm 11 skips dependency install scripts unless they are allowed; `ignore-scripts=false` does not lift that.
+Setup writes `dangerously-allow-all-scripts=true` and `allow-remote=all` to the agent's `~/.npmrc`, so every install script runs and pi's package installs print no `install-scripts` warning.
+A compromised dependency can therefore run code at install time, with the proxy-managed credentials usable.
+
+### Safety checks
+
+`run.sh` refuses to create a sandbox, before it removes an old one, when:
+
+- A workspace contains `~/.pi/agent/auth.json`, `~/.ssh`, `~/.gnupg` or `~/.config/gh` (`$HOME` and `/` included).
+- `sbx` stores a global `github` credential: the proxy attaches it to every sandbox's GitHub requests.
+- `ssh.agentForwardingEnabled` is `true`: the sandbox could sign with your SSH keys.
+
+`PI_SBX_ALLOW_EXPOSURE=1` skips the last two.
+
+It also mounts the first workspace's `.git/hooks` and `.git/config` read-only, because git runs both on the Mac.
+Commits, branches and tags still work; `git config` and `git remote add` inside the sandbox fail.
+Other files you run later (package scripts, repo-tracked hooks) and `.env` stay open to the agent, so keep secrets out of mounted projects.
 
 ## How the logins work
 
@@ -116,7 +137,9 @@ Inside the sandbox each variable holds an `sbx-cs-...` placeholder that the prox
 To change a key later, run `sbx secret set-custom` for that host and variable yourself.
 
 All of these custom secrets are global, so every sandbox on the Mac sees the placeholders (never the values).
-`sbx secret ls` lists them; `sbx secret rm --placeholder <placeholder> --force` removes one.
+Anything running in the sandbox can make authenticated requests to those hosts, for example through the Firecrawl scraper, so the network allowlist is not an exfiltration boundary.
+`sbx secret ls --json` lists them without values; plain `sbx secret ls` prints the first six and last four characters of each, so do not paste it.
+`sbx secret rm --placeholder <placeholder> --force` removes one.
 
 ## Check a sandbox
 
@@ -141,7 +164,8 @@ Skipped at the top level:
 
 | Entry | Reason |
 | --- | --- |
-| `auth.json` | Real tokens; the sandbox gets placeholders from `sbx` instead. Also dropped at any depth, and a sync that would ship one aborts. |
+| `auth.json` | Real tokens; the sandbox gets placeholders from `sbx` instead. Also dropped at any depth. A sync aborts if one would ship, if a staged file (outside `git/`) holds a credential-shaped string, or if `tar` cannot read a file. |
+| `missions/`, `claude-sdk/`, `provider-failover-state.json` | Work history of every host project and usage state with credential hashes. |
 | `install/` | The Mac's pi releases; the image ships its own pi. |
 | `npm/`, `bin/` | Built for macOS arm64 (native addons, `fd`); they cannot run in the Linux sandbox. pi installs the packages from `settings.json` at startup and uses the image's `fd` and `rg`. |
 | `sessions/`, `cache/`, `web-search-cache/`, `mcp-cache.json`, `mcp-npx-cache.json` | History and caches; the MCP caches contain Mac paths. |
@@ -171,12 +195,9 @@ Anything else follows your local `sbx` policy.
 ```console
 sh -n run.sh sync.sh
 shellcheck run.sh sync.sh
-python3 -m unittest discover -s tests -p 'test_*.py' -v
 sbx kit validate --offline . --json
 ```
 
-The launcher tests use synthetic credentials and a stub `sbx`; they never touch real secrets or sandboxes.
-They cover missing keys, refusal before destructive `--fresh` removal, existing-sandbox re-attach, stored-key creation, and unrelated credential entries.
 Live verification also returned `OK` from OpenRouter, Claude and ChatGPT, confirmed the OpenRouter placeholder and proxy interception, connected all seven retained MCP servers, and returned Docker documentation through `web_search`.
 The first MCP check reported a Chrome DevTools npm extraction failure; a serial retry connected all seven servers.
 A domain-filtered web search returned no results; an unfiltered query returned five.

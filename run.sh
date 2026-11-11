@@ -35,6 +35,19 @@ fail() {
   exit 1
 }
 
+# Workspaces are mounted read-write. One that contains a host credential store
+# ($HOME and / included) would hand the sandbox the real tokens the proxy
+# exists to keep out.
+guard_workspace() { # sbx workspace argument: PATH[:TARGET][:ro]
+  dir=$(cd -P "${1%%:*}" 2>/dev/null && pwd) || fail "workspace not found: ${1%%:*}"
+  home=$(cd -P "$HOME" && pwd)
+  for secret in .pi/agent/auth.json .ssh .gnupg .config/gh; do
+    case $home/$secret/ in
+      "${dir%/}"/*) fail "workspace $dir contains $home/$secret" ;;
+    esac
+  done
+}
+
 fresh=
 if [ "${1:-}" = "--fresh" ]; then
   fresh=1
@@ -142,6 +155,25 @@ if [ -n "$exists" ] && [ -z "$fresh" ]; then
   exec sbx run --name "$name"
 fi
 
+# From here on a sandbox is created. Everything that can refuse runs before
+# --fresh removes the old one.
+[ $# -gt 0 ] || set -- "$PWD"
+for workspace in "$@"; do
+  guard_workspace "$workspace"
+done
+
+# sbx attaches a stored GitHub credential to every sandbox's GitHub requests
+# and forwards the host SSH agent; the kit cannot switch either off.
+if [ -z "${PI_SBX_ALLOW_EXPOSURE:-}" ]; then
+  printf '%s' "$secrets" | jq -e '
+    any(.secrets[]?; .scope == "global" and .type == "service" and .name == "github")
+  ' >/dev/null && fail "sbx would attach its stored GitHub credential to the sandbox; run: sbx secret rm github
+(PI_SBX_ALLOW_EXPOSURE=1 skips this check)"
+  [ "$(sbx settings get ssh.agentForwardingEnabled)" != true ] ||
+    fail "sbx would forward your SSH agent into the sandbox; run: sbx settings set ssh.agentForwardingEnabled false
+(PI_SBX_ALLOW_EXPOSURE=1 skips this check)"
+fi
+
 # Check before removing a sandbox for --fresh. Never replace an existing
 # service secret from the shell, and do not block re-attaching an older kit.
 if ! printf '%s' "$secrets" | jq -e '
@@ -161,6 +193,17 @@ fi
 
 echo "== validating kit"
 sbx kit validate --offline "$kit" >/dev/null || fail "kit validation failed"
+
+# Git runs .git/hooks and the options in .git/config on the host, so the agent
+# must not rewrite them. Other files the host later runs (package scripts,
+# repo-tracked hooks) stay writable.
+case $1 in
+  *:*) echo "   note: the first workspace has a : suffix; its .git hooks and config stay writable" >&2 ;;
+  *)
+    [ ! -d "$1/.git/hooks" ] || set -- "$@" "$1/.git/hooks:ro"
+    [ ! -f "$1/.git/config" ] || set -- "$@" "$1/.git/config:ro"
+    ;;
+esac
 
 echo "== creating sandbox $name (sbx output follows)"
 exec sbx run --name "$name" "$kit" "$@"

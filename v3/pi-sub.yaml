@@ -82,9 +82,7 @@ capabilities:
   - type: com.docker.sandbox/resources@1
     config:
       cpu: 4
-      memory: 2g
-      # Preserved from v2. Docker documents that sbx ignores this field.
-      gpu: "1"
+      memory: 4g
 
   - type: com.docker.sandbox/agent-context@2
     config:

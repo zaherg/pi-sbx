@@ -36,6 +36,8 @@ started=$(date +%s)
 #   sessions, cache, web-search-cache, mcp-cache.json, mcp-npx-cache.json
 #                        host history and caches; the MCP caches embed host paths
 #   langfuse.json        tracing keys that no installed extension reads
+#   missions, claude-sdk, provider-failover-state.json
+#                        host work history and usage state (credential hashes)
 #   .ruff_cache, .serena, tests
 #                        host tooling for this directory
 #   *.log, run-history.jsonl, settings_old.json, settings.json.*
@@ -44,6 +46,7 @@ skip_top() {
   case $1 in
     auth.json | AGENTS.md | install | npm | bin | sessions | cache | \
       web-search-cache | mcp-cache.json | mcp-npx-cache.json | langfuse.json | \
+      missions | claude-sdk | provider-failover-state.json | \
       .ruff_cache | .serena | tests | run-history.jsonl | settings_old.json | \
       settings.json.* | *.log | .DS_Store)
       return 0 ;;
@@ -73,9 +76,10 @@ echo "   skipping:$skipped"
 # the host: files deleted or newly excluded on the host leave the kit too.
 mkdir -p "$parent"
 stage=$(mktemp -d "$parent/.agent.sync.XXXXXX")
+status=$stage.status
 old=
 cleanup() {
-  rm -rf "$stage"
+  rm -rf "$stage" "$status"
   [ -z "$old" ] || rm -rf "$old"
 }
 trap cleanup EXIT
@@ -97,8 +101,9 @@ echo "   copying $entries entries"
 # tar streams every entry name to stderr with -v. Fold that into one progress
 # line per 5 percent and forward anything that is not a name (tar errors)
 # as-is. The fd swap keeps the archive itself on stdout, straight into the
-# extractor, while stderr goes to awk.
-{ (cd "$src" && tar cvf - --exclude=auth.json --exclude=.DS_Store "$@") 2>&1 1>&3 |
+# extractor, while stderr goes to awk. A pipeline reports only its last
+# command, so the archiver leaves a marker file when it exits cleanly.
+{ (cd "$src" && tar cvf - --exclude=auth.json --exclude=.DS_Store "$@" && echo ok > "$status") 2>&1 1>&3 |
   awk -v total="$entries" '
     BEGIN { total += 0; step = int(total / 20); if (step < 1) step = 1 }
     /^(a |\.\/)/ {
@@ -111,6 +116,7 @@ echo "   copying $entries entries"
       if (total > 0 && n == total) printf "   [100%%] %d/%d entries\n", n, total
       else printf "   copied %d/%d entries\n", n, total
     }' >&2; } 3>&1 | (cd "$stage" && tar $xowner -xf -)
+[ -s "$status" ] || { echo "reading $src failed (tar errors above); aborting without touching the kit" >&2; exit 1; }
 
 # AGENTS.md is usually a symlink to the shared ~/.agents/AGENTS.md on the
 # host. The kit engine rejects symlinks that resolve outside the artifact, so
@@ -133,11 +139,10 @@ fi
 # Paths into the host's agent directory become paths into the sandbox's
 # (/home/agent/.pi/agent: the agent user's home per kit spec v2 §9.1), e.g.
 # pi-blitz-handoff's recoveryDirectory. Project paths are left alone because
-# sbx mounts workspaces at their host paths; missions/ and claude-sdk/ are
-# history records, not configuration.
+# sbx mounts workspaces at their host paths.
 sandbox_agent=/home/agent/.pi/agent
 host_pattern=$(printf '%s' "$src" | sed 's/[][\.*^$|]/\\&/g')
-find "$stage" -type f -name '*.json' ! -path "$stage/missions/*" ! -path "$stage/claude-sdk/*" |
+find "$stage" -type f -name '*.json' |
   while IFS= read -r file; do
     grep -qF "$src" "$file" || continue
     if ! sed "s|$host_pattern|$sandbox_agent|g" "$file" > "$file.rewrite" ||
@@ -193,12 +198,19 @@ if [ -f "$mcp" ]; then
 fi
 
 # Fail closed: a real token must never become kit content, whatever the
-# selection above did.
+# selection above did: by file name, then by credential-shaped content. git/
+# holds third-party checkouts whose tests carry synthetic fixtures.
 if [ -n "$(find "$stage" -name auth.json -print | head -1)" ]; then
   echo "auth.json reached the staged kit content; aborting without touching the kit" >&2
   exit 1
 fi
-echo "   auth.json: not present in kit content (ok)"
+secret_shapes='sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|fc-[a-f0-9]{32}|BSA[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{15,}\.eyJ[A-Za-z0-9_-]{10,}\.|-----BEGIN [A-Z ]*PRIVATE KEY-----'
+leaks=$(grep -rIlE "$secret_shapes" --exclude-dir=git "$stage" || true)
+if [ -n "$leaks" ]; then
+  printf 'credential-shaped content in:\n%s\naborting without touching the kit\n' "$leaks" >&2
+  exit 1
+fi
+echo "   auth.json and credential-shaped content: none in kit content (ok)"
 
 # Swap: move the previous copy aside, put the new one in place, then delete
 # the old one. A failure between the two moves restores the previous copy.

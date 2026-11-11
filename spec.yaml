@@ -7,7 +7,8 @@ description: >-
     all proxy-managed.
 
 # Inherits the pre-baked pi image (pi, node, fd, rolling nightly rebuilds).
-# Setup upgrades the image's Node 22 to the latest Node 24.x release.
+# The tag stays mutable on purpose: the rolling rebuilds are how pi updates.
+# Setup replaces the image's Node 22 with a pinned Node 26 release.
 sandbox:
     image: docker.io/sbx/pi-image:latest
     entrypoint:
@@ -15,9 +16,10 @@ sandbox:
         - --approve
     # https://github.com/docker/sbx-kits-contrib/blob/main/spec/SPEC-v2.md#324-resources
     resources:
-        memory: 2g
+        # Measured peak: 2.3 GB during the first start (pi installs its
+        # packages), 1.2 GB warm. 2g was OOM-killed.
+        memory: 4g
         cpu: 4
-        gpu: "1"
 
 agentInstructions:
     filename: AGENTS.md
@@ -121,15 +123,20 @@ credentials:
 
 setup:
     install:
+        # Run as root at create time, so n and Node are pinned; bump together.
         - command: >-
-              npm install --global n && n 26 &&
+              npm install --global n@11.0.0 && n 26.13.0 &&
               node -e "process.exit(
-              parseInt(process.versions.node, 10) < 26 ? 1 : 0)"
+              process.versions.node === '26.13.0' ? 0 : 1)"
           user: "0"
-          description: Install the latest Node.js 26.x release
-        - command: "npm config set ignore-scripts false"
+          description: Install the pinned Node.js release
+        # npm 11 skips dependency install scripts unless allowed; ignore-scripts
+        # =false does not lift that.
+        - command: >-
+              npm config set dangerously-allow-all-scripts true &&
+              npm config set allow-remote all
           user: "1000"
-          description: Allow npm dependency lifecycle scripts
+          description: Allow all npm install scripts and remote dependencies
         # Same one-liner the upstream kit uses: `sbx exec` contexts do not
         # inherit the proxy env, so pi's runtime npm use needs it in ~/.npmrc.
         - command: >-
