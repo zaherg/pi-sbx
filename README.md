@@ -35,7 +35,7 @@ SANDBOX=name pi-sbx                   # choose the sandbox name outright
 
 An existing sandbox is re-attached as it is, without syncing.
 Kit content, credentials and workspaces are fixed when a sandbox is created, so use `--fresh` after changing settings.
-Sandbox setup installs the pinned Node 26.13.0 (`n@11.0.0`); bump both pins together in `spec.yaml`.
+Sandbox setup installs the pinned Node 26.13.0 (`n@11.0.0`) and Bun 1.4.4; bump Node and `n` together in `spec.yaml`.
 The kit sets a `4g` memory limit for the whole sandbox through `sandbox.resources.memory`.
 Measured peak use is 2.3 GB during the first start and 1.2 GB afterwards; `2g` was OOM-killed.
 Creating a sandbox takes about two minutes the first time pi starts in it, because pi installs the packages listed in `settings.json` (Linux builds).
@@ -164,9 +164,10 @@ Skipped at the top level:
 
 | Entry | Reason |
 | --- | --- |
-| `auth.json` | Real tokens; the sandbox gets placeholders from `sbx` instead. Also dropped at any depth. A sync aborts if one would ship, if a staged file (outside `git/`) holds a credential-shaped string, or if `tar` cannot read a file. |
+| `auth.json` | Real tokens; the sandbox gets placeholders from `sbx` instead. Also dropped at any depth. A sync aborts if one would ship, if a staged file holds a credential-shaped string, or if `tar` cannot read a file. |
 | `missions/`, `claude-sdk/`, `provider-failover-state.json` | Work history of every host project and usage state with credential hashes. |
 | `install/` | The Mac's pi releases; the image ships its own pi. |
+| `git/` | Managed package checkouts; pi clones the repositories declared in `settings.json` and installs their dependencies at startup. |
 | `npm/`, `bin/` | Built for macOS arm64 (native addons, `fd`); they cannot run in the Linux sandbox. pi installs the packages from `settings.json` at startup and uses the image's `fd` and `rg`. |
 | `sessions/`, `cache/`, `web-search-cache/`, `mcp-cache.json`, `mcp-npx-cache.json` | History and caches; the MCP caches contain Mac paths. |
 | `langfuse.json` | Tracing keys that no installed extension reads. |

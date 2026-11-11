@@ -29,6 +29,7 @@ started=$(date +%s)
 #   auth.json            real OAuth tokens (the engine renders the sandbox copy)
 #   AGENTS.md            copied below as a regular file (a symlink on the host)
 #   install              host pi releases; the image ships its own pi
+#   git                  managed package checkouts; pi clones them at startup
 #   npm, bin             built for the host OS (macOS arm64): native addons and
 #                        binaries that cannot run in the Linux sandbox. pi
 #                        reinstalls the settings.json packages at startup and
@@ -44,7 +45,7 @@ started=$(date +%s)
 #                        logs and backups
 skip_top() {
   case $1 in
-    auth.json | AGENTS.md | install | npm | bin | sessions | cache | \
+    auth.json | AGENTS.md | install | npm | git | bin | sessions | cache | \
       web-search-cache | mcp-cache.json | mcp-npx-cache.json | langfuse.json | \
       missions | claude-sdk | provider-failover-state.json | \
       .ruff_cache | .serena | tests | run-history.jsonl | settings_old.json | \
@@ -198,14 +199,13 @@ if [ -f "$mcp" ]; then
 fi
 
 # Fail closed: a real token must never become kit content, whatever the
-# selection above did: by file name, then by credential-shaped content. git/
-# holds third-party checkouts whose tests carry synthetic fixtures.
+# selection above did: by file name, then by credential-shaped content.
 if [ -n "$(find "$stage" -name auth.json -print | head -1)" ]; then
   echo "auth.json reached the staged kit content; aborting without touching the kit" >&2
   exit 1
 fi
 secret_shapes='sk-[A-Za-z0-9_-]{20,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|fc-[a-f0-9]{32}|BSA[A-Za-z0-9_-]{20,}|eyJ[A-Za-z0-9_-]{15,}\.eyJ[A-Za-z0-9_-]{10,}\.|-----BEGIN [A-Z ]*PRIVATE KEY-----'
-leaks=$(grep -rIlE "$secret_shapes" --exclude-dir=git "$stage" || true)
+leaks=$(grep -rIlE "$secret_shapes" "$stage" || true)
 if [ -n "$leaks" ]; then
   printf 'credential-shaped content in:\n%s\naborting without touching the kit\n' "$leaks" >&2
   exit 1

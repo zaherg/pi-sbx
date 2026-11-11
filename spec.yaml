@@ -8,7 +8,7 @@ description: >-
 
 # Inherits the pre-baked pi image (pi, node, fd, rolling nightly rebuilds).
 # The tag stays mutable on purpose: the rolling rebuilds are how pi updates.
-# Setup replaces the image's Node 22 with a pinned Node 26 release.
+# Setup replaces the image's Node 22 with pinned Node 26 and installs Bun.
 sandbox:
     image: docker.io/sbx/pi-image:latest
     entrypoint:
@@ -30,8 +30,8 @@ permissions:
             # Claude: the host-side custom secret run.sh registers (README, "How
             # the logins work") swaps the token in on this host.
             - api.anthropic.com
-            # Node installation and the packages pi installs from settings.json
-            # at startup. The kit ships none of the host's macOS node_modules.
+            # Node/Bun installation and pi's packages from settings.json.
+            # The kit ships none of the host's macOS node_modules.
             - registry.npmjs.org
             - nodejs.org
             # git: packages in settings.json (github.com/zaherg/pi-extensions).
@@ -130,6 +130,11 @@ setup:
               process.versions.node === '26.13.0' ? 0 : 1)"
           user: "0"
           description: Install the pinned Node.js release
+        - command: >-
+              npm install --global --dangerously-allow-all-scripts bun@1.4.4 &&
+              bun --version
+          user: "0"
+          description: Install the pinned Bun release
         # npm 11 skips dependency install scripts unless allowed; ignore-scripts
         # =false does not lift that.
         - command: >-
