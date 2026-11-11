@@ -1,0 +1,140 @@
+schemaVersion: "2"
+kind: sandbox
+name: pi-sub
+displayName: pi (subscriptions)
+description: >-
+    pi coding agent with Claude and ChatGPT subscriptions plus OpenRouter,
+    all proxy-managed.
+
+# Inherits the pre-baked pi image (pi, node, fd, rolling nightly rebuilds).
+# Setup upgrades the image's Node 22 to the latest Node 24.x release.
+sandbox:
+    image: docker.io/sbx/pi-image:latest
+    entrypoint:
+        - pi
+        - --approve
+    # https://github.com/docker/sbx-kits-contrib/blob/main/spec/SPEC-v2.md#324-resources
+    resources:
+        memory: 2g
+        cpu: 4
+        gpu: "1"
+
+agentInstructions:
+    filename: AGENTS.md
+
+permissions:
+    network:
+        allow:
+            # Claude: the host-side custom secret run.sh registers (README, "How
+            # the logins work") swaps the token in on this host.
+            - api.anthropic.com
+            # Node installation and the packages pi installs from settings.json
+            # at startup. The kit ships none of the host's macOS node_modules.
+            - registry.npmjs.org
+            - nodejs.org
+            # git: packages in settings.json (github.com/zaherg/pi-extensions).
+            - github.com
+            # serena MCP: sync.sh rewrites its uvx command to `uv tool run` (the
+            # image has uv, not uvx), which installs it from git and PyPI.
+            - raw.githubusercontent.com
+            - pypi.org
+            - files.pythonhosted.org
+            # ChatGPT: pi's openai-codex provider posts to
+            # chatgpt.com/backend-api; auth.openai.com is the token endpoint
+            # the proxy intercepts.
+            - api.openai.com
+            - auth.openai.com
+            - chatgpt.com
+            - "*.chatgpt.com"
+            - "*.oaiusercontent.com"
+            - files.openai.com
+            # MCP servers and pi web-search configs from ~/.pi/agent
+            # (see README). Remote HTTP MCP servers (mcp.json).
+            - executor.mac.srvr.dev
+            - firecrawl.nanosite.app
+            # searxng MCP reads SEARXNG_INSTANCES.
+            - search.mac.srvr.dev
+            # pi web provider: brave search (firecrawl is covered above).
+            - api.search.brave.com
+            # OpenRouter models (pi's openrouter provider:
+            # openrouter.ai/api/v1).
+            - openrouter.ai
+            # TypeSafe provider (api.typesafe.ai/v1).
+            - api.typesafe.ai
+
+credentials:
+    # ChatGPT is the kit's only OAuth credential, on purpose: sbx 0.51 registers
+    # only the first OAuth credential of a kit with the proxy and skips the rest
+    # without a warning, and mixins may not declare OAuth. Claude goes through a
+    # custom secret instead (run.sh).
+    #
+    # oauth-only, no apiKey block: a stored OpenAI API key has nothing to attach
+    # to, so it cannot silently win over the subscription.
+    - service: openai
+      description: ChatGPT subscription (OAuth)
+      oauth:
+          tokenEndpoint:
+              host: auth.openai.com
+              path: /oauth/token
+          resourceHosts:
+              - chatgpt.com
+          sentinels:
+              # JWT-shaped because pi decodes the ChatGPT account id from the
+              # access token's payload before every request. The account id
+              # inside is a dummy ("proxy-managed"): on chatgpt.com the proxy
+              # replaces the Authorization header and injects the real
+              # chatgpt-account-id.
+              accessToken: "IHsiYWxnIjoibm9uZSIsInR5cCI6IkpXVCJ9.\
+                  ICB7Imh0dHBzOi8vYXBpLm9wZW5haS5jb20v\
+                  YXV0aCI6eyJjaGF0Z3B0X2FjY291\
+                  bnRfaWQiOiJwcm94eS1tYW5hZ2VkIn19.oai-oat01-proxy-managed"
+              refreshToken: oai-ort01-proxy-managed
+          # pi's native auth store; a credential found here outranks the env.
+          credentialFile:
+              path: ~/.pi/agent/auth.json
+              structure:
+                  openai-codex:
+                      type: oauth
+                      access: "{{.AccessToken}}"
+                      refresh: "{{.RefreshToken}}"
+                      # Fixed far future (2100-01-01, Unix ms) instead of
+                      # {{.ExpiresAt}}: the proxy puts the host's current token
+                      # on every chatgpt.com request, while a refresh started
+                      # inside the sandbox is not intercepted (sbx 0.51) and
+                      # fails with invalid_client. So pi must never decide the
+                      # token expired; freshness stays on the host.
+                      expires: 4102444800000
+
+    # The API key stored with `sbx secret set openrouter` (or `sbx secret import
+    # openrouter`). The sandbox sees OPENROUTER_API_KEY=proxy-managed, which pi
+    # reads for its openrouter provider; the proxy sets the real key on requests
+    # to openrouter.ai. API-key credentials are not limited to one per kit.
+    - service: openrouter
+      description: OpenRouter API key
+      apiKey:
+          name: OPENROUTER_API_KEY
+          proxyManaged: true
+          inject:
+              - domain: openrouter.ai
+                header: Authorization
+                format: "Bearer %s"
+
+setup:
+    install:
+        - command: >-
+              npm install --global n && n 26 &&
+              node -e "process.exit(
+              parseInt(process.versions.node, 10) < 26 ? 1 : 0)"
+          user: "0"
+          description: Install the latest Node.js 26.x release
+        - command: "npm config set ignore-scripts false"
+          user: "1000"
+          description: Allow npm dependency lifecycle scripts
+        # Same one-liner the upstream kit uses: `sbx exec` contexts do not
+        # inherit the proxy env, so pi's runtime npm use needs it in ~/.npmrc.
+        - command: >-
+              if [ -n "${HTTP_PROXY:-}" ]; then npm config set
+              proxy="$HTTP_PROXY" https-proxy="${HTTPS_PROXY:-$HTTP_PROXY}";
+              fi
+          user: "1000"
+          description: Point npm at the sandbox proxy in ~/.npmrc

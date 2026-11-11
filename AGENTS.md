@@ -1,0 +1,4 @@
+- This is a v2 spec project.
+- DO not write tests.
+- use ponytail skill to find the simplest solution
+- always read the docs to get the latest info https://github.com/docker/sbx-kits-contrib/blob/main/spec/SPEC-v2.md
