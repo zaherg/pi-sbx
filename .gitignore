@@ -1,0 +1,8 @@
+# Local credentials
+.env
+.env.*
+auth.json
+
+# Local artifacts
+.DS_Store
+.cache/
