@@ -1,6 +1,6 @@
 schemaVersion: "2"
 kind: sandbox
-name: pi-sub
+name: pi
 displayName: pi (subscriptions)
 description: >-
     pi coding agent with Claude and ChatGPT subscriptions plus OpenRouter,
@@ -19,7 +19,7 @@ sandbox:
         # Measured peak: 2.3 GB during the first start (pi installs its
         # packages), 1.2 GB warm. 2g was OOM-killed.
         memory: 4g
-        cpu: 4
+        cpu: 2
 
 agentInstructions:
     filename: AGENTS.md
@@ -125,9 +125,8 @@ setup:
     install:
         # Run as root at create time, so n and Node are pinned; bump together.
         - command: >-
-              npm install --global n@11.0.0 && n 26.13.0 &&
-              node -e "process.exit(
-              process.versions.node === '26.13.0' ? 0 : 1)"
+              npm install --global n@11.0.0 && n 26.13.0 && node -e
+              "process.exit(process.versions.node === '26.13.0' ? 0 : 1)"
           user: "0"
           description: Install the pinned Node.js release
         - command: >-
