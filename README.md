@@ -113,6 +113,28 @@ Anything else follows the local `sbx` policy.
 
 ## Local checks
 
+Use [`act`](https://nektosact.com/installation/index.html) to run the [validation workflow](.github/workflows/validate.yml) locally in Docker, including its pinned tool downloads and checksum checks.
+The installation guide covers macOS, Linux and Windows; on macOS with Homebrew:
+
+```console
+brew install act
+```
+
+Start Docker, then run from the repository root:
+
+```console
+act workflow_dispatch -W .github/workflows/validate.yml \
+  --container-architecture linux/amd64 \
+  -P ubuntu-24.04=ghcr.io/catthehacker/ubuntu:act-24.04 \
+  --rm
+```
+
+The [community runner image](https://github.com/catthehacker/docker_images) includes Docker CLI and Buildx; the v3 build also needs access to the host Docker daemon.
+`linux/amd64` matches the workflow's pinned binaries, including when running on Apple Silicon.
+To run one job, add `-j lint`, `-j kit-v2` or `-j kit-v3`.
+
+For quick checks with tools already installed on the host:
+
 ```console
 git ls-files -z '*.sh' | xargs -0 shellcheck
 actionlint
@@ -121,10 +143,11 @@ mkdir -p v3/files/home/.pi/agent
 docker buildx build v3 -f v3/pi-sub.yaml --output type=cacheonly
 ```
 
-`.github/workflows/validate.yml` runs the same checks on pushes to `main` and on pull requests.
+GitHub runs the workflow on pushes to `main` and on pull requests.
+`act` does not reproduce every [GitHub runner feature](https://nektosact.com/not_supported.html), so a local pass does not replace the hosted run.
 
-> **Note:** the workflow only checks the kit statically.
-> It never creates a sandbox, runs `sync.sh` or uses real credentials, and it builds v3 against an empty configuration.
+> **Note:** the workflow only validates and builds the kits.
+> It never creates a sandbox, runs `sync.sh` or uses provider credentials, and it builds v3 against an empty configuration.
 > Logins, MCP servers and package installs still need a manual run with `pi-sbx --fresh`.
 
 ## Known limits
