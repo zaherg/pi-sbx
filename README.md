@@ -62,7 +62,7 @@ The binding file contains approvals, not secret values; keep it mode `0600`.
 
 1. Checks the host-side custom secrets described below and registers any that are missing or out of date.
 2. Re-attaches if the sandbox exists, unless `--fresh` was given.
-3. Otherwise runs the [safety checks](#safety-checks) and requires the stored OpenRouter key before removing an existing sandbox, runs `sync.sh`, validates the kit, and creates the sandbox with `sbx run --name <name> <kit> <workspace>`.
+3. Otherwise runs the [safety checks](#safety-checks), requires the stored OpenRouter key, runs `sync.sh` and validates the kit, all before removing an existing sandbox, then creates the sandbox with `sbx run --name <name> <kit> <workspace>`.
 
 The kit goes in the agent position: it is a `kind: sandbox` kit, and `--kit` only takes mixins.
 
@@ -138,7 +138,7 @@ To change a key later, run `sbx secret set-custom` for that host and variable yo
 
 All of these custom secrets are global, so every sandbox on the Mac sees the placeholders (never the values).
 Anything running in the sandbox can make authenticated requests to those hosts, for example through the Firecrawl scraper, so the network allowlist is not an exfiltration boundary.
-`sbx secret ls --json` lists them without values; plain `sbx secret ls` prints the first six and last four characters of each, so do not paste it.
+`sbx secret ls` and `sbx secret ls --json` both print the first six and last four characters of each value, so do not paste their output.
 `sbx secret rm --placeholder <placeholder> --force` removes one.
 
 ## Check a sandbox
@@ -194,14 +194,15 @@ Anything else follows your local `sbx` policy.
 ## Local checks
 
 ```console
-sh -n run.sh sync.sh
-shellcheck run.sh sync.sh
-sbx kit validate --offline . --json
+git ls-files -z '*.sh' | xargs -0 shellcheck
+actionlint
+sbx kit validate --offline .
+mkdir -p v3/files/home/.pi/agent
+docker buildx build v3 -f v3/pi-sub.yaml --output type=cacheonly
 ```
 
-Live verification also returned `OK` from OpenRouter, Claude and ChatGPT, confirmed the OpenRouter placeholder and proxy interception, connected all seven retained MCP servers, and returned Docker documentation through `web_search`.
-The first MCP check reported a Chrome DevTools npm extraction failure; a serial retry connected all seven servers.
-A domain-filtered web search returned no results; an unfiltered query returned five.
+`.github/workflows/validate.yml` runs the same checks on pushes to `main` and on pull requests, with pinned, checksum-verified ShellCheck, actionlint and `sbx` binaries.
+The v3 build in CI uses an empty `v3/files/home/.pi/agent`, because synced configuration is never committed.
 
 ## Known limits
 

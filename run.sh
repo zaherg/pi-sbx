@@ -16,18 +16,9 @@
 # and creates it again from a fresh sync.
 set -e
 
-# Resolve $0 through symlinks: run.sh is often linked into ~/bin (pi-sbx), and
-# the kit lives next to the real script, not next to the link.
-self=$0
-while [ -L "$self" ]; do
-  dir=$(cd -P "$(dirname "$self")" && pwd)
-  target=$(readlink "$self")
-  case $target in
-    /*) self=$target ;;
-    *) self=$dir/$target ;;
-  esac
-done
-kit=$(cd -P "$(dirname "$self")" && pwd)
+# run.sh is often linked into ~/bin (pi-sbx); the kit lives next to the real
+# script, not next to the link.
+kit=$(dirname "$(realpath "$0")")
 me=$(basename "$0")
 
 fail() {
@@ -74,15 +65,15 @@ command -v jq >/dev/null 2>&1 || fail "jq is required"
 
 # Host-side custom secrets, global to all sandboxes. Each maps a placeholder
 # the sandbox sees to a value that stays on this Mac; the proxy swaps it in on
-# requests to the target host. `sbx secret ls --json` never shows values.
-secrets=
-load_secrets() {
-  secrets=$(sbx secret ls --json) || fail "could not list sbx secrets"
-}
+# requests to the target host. `sbx secret ls --json` masks values but keeps
+# their first six and last four characters, so never print $secrets.
 global_secret() { # TARGET-HOST ENV -> prints the matching entry, if any
-  printf '%s' "$secrets" | jq -c --arg h "$1" --arg e "$2" '
-    [.. | objects | select(.scope? == "global" and .env? == $e and
-      ((.targets? // []) | index($h)))][0] // empty'
+  printf '%s' "$secrets" | jq -c --arg h "$1" --arg e "$2" 'first(.custom_secrets[]? |
+    select(.scope == "global" and .env == $e and (.targets | index($h))))'
+}
+has_service() { # NAME -> succeeds when sbx stores a global service secret
+  printf '%s' "$secrets" | jq -e --arg n "$1" '
+    any(.secrets[]?; .scope == "global" and .type == "service" and .name == $n)' >/dev/null
 }
 
 # Claude. sbx registers only the first OAuth credential of a kit, and this
@@ -100,10 +91,8 @@ ensure_claude_secret() {
     *"'"*) fail "paths containing a single quote are not supported: $pi_bin $node_bin" ;;
   esac
   want="PATH='$(dirname "$node_bin")':/usr/bin:/bin '$pi_bin' auth print-bearer-token --provider anthropic --min-expiry 1h"
-  have=$(global_secret api.anthropic.com ANTHROPIC_OAUTH_TOKEN)
-  if [ -n "$have" ] &&
-    [ "$(printf '%s' "$have" | jq -r .placeholder)" = "$claude_placeholder" ] &&
-    [ "$(printf '%s' "$have" | jq -r .source)" = "$want" ]; then
+  have=$(global_secret api.anthropic.com ANTHROPIC_OAUTH_TOKEN | jq -r '.placeholder + " " + .source')
+  if [ "$have" = "$claude_placeholder $want" ]; then
     echo "   Claude: custom secret up to date"
     return 0
   fi
@@ -135,7 +124,7 @@ ensure_env_secret() { # TARGET-HOST ENV
 
 echo "== run: kit $kit, sandbox $name"
 echo "== checking host-side secrets"
-load_secrets
+secrets=$(sbx secret ls --json) || fail "could not list sbx secrets"
 ensure_claude_secret
 ensure_env_secret api.search.brave.com BRAVE_API_KEY
 ensure_env_secret firecrawl.nanosite.app FIRECRAWL_API_KEY
@@ -165,9 +154,7 @@ done
 # sbx attaches a stored GitHub credential to every sandbox's GitHub requests
 # and forwards the host SSH agent; the kit cannot switch either off.
 if [ -z "${PI_SBX_ALLOW_EXPOSURE:-}" ]; then
-  printf '%s' "$secrets" | jq -e '
-    any(.secrets[]?; .scope == "global" and .type == "service" and .name == "github")
-  ' >/dev/null && fail "sbx would attach its stored GitHub credential to the sandbox; run: sbx secret rm github
+  has_service github && fail "sbx would attach its stored GitHub credential to the sandbox; run: sbx secret rm github
 (PI_SBX_ALLOW_EXPOSURE=1 skips this check)"
   [ "$(sbx settings get ssh.agentForwardingEnabled)" != true ] ||
     fail "sbx would forward your SSH agent into the sandbox; run: sbx settings set ssh.agentForwardingEnabled false
@@ -176,23 +163,19 @@ fi
 
 # Check before removing a sandbox for --fresh. Never replace an existing
 # service secret from the shell, and do not block re-attaching an older kit.
-if ! printf '%s' "$secrets" | jq -e '
-  any(.secrets[]?; .scope == "global" and .type == "service" and .name == "openrouter")
-' >/dev/null; then
-  fail "OpenRouter key is not stored in sbx; run: sbx secret import openrouter
+has_service openrouter || fail "OpenRouter key is not stored in sbx; run: sbx secret import openrouter
 or enter it with: sbx secret set openrouter"
-fi
 echo "   OpenRouter: stored service secret present"
-
-if [ -n "$exists" ]; then
-  echo "== removing sandbox $name so the synced settings re-apply"
-  sbx rm -f "$name" || fail "could not remove sandbox $name; not recreating it"
-fi
 
 "$kit/sync.sh"
 
 echo "== validating kit"
 sbx kit validate --offline "$kit" >/dev/null || fail "kit validation failed"
+
+if [ -n "$exists" ]; then
+  echo "== removing sandbox $name so the synced settings re-apply"
+  sbx rm -f "$name" || fail "could not remove sandbox $name; not recreating it"
+fi
 
 # Git runs .git/hooks and the options in .git/config on the host, so the agent
 # must not rewrite them. Other files the host later runs (package scripts,

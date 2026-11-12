@@ -25,6 +25,6 @@ changes.
 The kit uses the same OpenAI and OpenRouter credential bindings and global
 custom secrets described in `../README.md`.
 Register those host-side secrets before creating the sandbox.
-The v3 recipe moves Node installation into the image build and retains the
+The v3 recipe moves Node and Bun installation into the image build and retains the
 v2 resource requests, npm settings, credentials, and runtime network allowlist.
 The safety checks in `../run.sh` apply to the v2 kit only.

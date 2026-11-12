@@ -1,0 +1,78 @@
+# Pinned commit SHAs and SHA-256 checksums cannot wrap.
+# yamllint disable rule:line-length
+name: Validate
+
+on:
+    push:
+        branches: [main]
+    pull_request:
+    workflow_dispatch:
+
+permissions:
+    contents: read
+
+jobs:
+    lint:
+        name: ShellCheck and actionlint
+        runs-on: ubuntu-24.04
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+              with:
+                  persist-credentials: false
+            - name: Install ShellCheck and actionlint
+              env:
+                  SHELLCHECK_VERSION: 0.11.0
+                  SHELLCHECK_SHA256: 8c3be12b05d5c177a04c29e3c78ce89ac86f1595681cab149b65b97c4e227198
+                  ACTIONLINT_VERSION: 1.7.12
+                  ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+              run: |
+                  mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
+                  curl -fsSLo shellcheck.tar.xz "https://github.com/koalaman/shellcheck/releases/download/v$SHELLCHECK_VERSION/shellcheck-v$SHELLCHECK_VERSION.linux.x86_64.tar.xz"
+                  echo "$SHELLCHECK_SHA256  shellcheck.tar.xz" | sha256sum -c -
+                  tar xJf shellcheck.tar.xz -C bin --strip-components=1 "shellcheck-v$SHELLCHECK_VERSION/shellcheck"
+                  curl -fsSLo actionlint.tar.gz "https://github.com/rhysd/actionlint/releases/download/v$ACTIONLINT_VERSION/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+                  echo "$ACTIONLINT_SHA256  actionlint.tar.gz" | sha256sum -c -
+                  tar xzf actionlint.tar.gz -C bin actionlint
+                  echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+            - name: ShellCheck
+              run: git ls-files -z '*.sh' | xargs -0 shellcheck
+            # Also runs ShellCheck on every `run:` block, since it is on PATH.
+            - name: actionlint
+              run: actionlint
+
+    kit-v2:
+        name: Validate v2 kit
+        runs-on: ubuntu-24.04
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+              with:
+                  persist-credentials: false
+            # Offline validation needs only the sbx binary: no daemon, no sign-in.
+            - name: Install sbx
+              env:
+                  SBX_VERSION: v0.53.0
+                  SBX_SHA256: a8e171ed331e2485ff8d46978d7bf9e74929769acacb6759c15a0a665a3b7bb2
+              run: |
+                  mkdir -p "$RUNNER_TEMP/bin" && cd "$RUNNER_TEMP"
+                  curl -fsSLo sbx.tar.gz "https://github.com/docker/sbx-releases/releases/download/$SBX_VERSION/DockerSandboxes-linux-amd64.tar.gz"
+                  echo "$SBX_SHA256  sbx.tar.gz" | sha256sum -c -
+                  tar xzf sbx.tar.gz -C bin --strip-components=1 docker-sbx/sbx
+                  echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+            - name: sbx kit validate
+              run: sbx kit validate --offline .
+
+    kit-v3:
+        name: Validate v3 kit
+        runs-on: ubuntu-24.04
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+              with:
+                  persist-credentials: false
+            # sync.sh generates the kit content locally and it is never committed;
+            # an empty stand-in lets the recipe's COPY resolve.
+            - name: Stand in for the synced configuration
+              run: mkdir -p v3/files/home/.pi/agent
+            # The sandbox-kit frontend validates the descriptor, then builds the
+            # recipe; the result is discarded.
+            - name: Build the v3 kit
+              run: docker buildx build v3 -f v3/pi-sub.yaml --output type=cacheonly
