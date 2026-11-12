@@ -151,6 +151,14 @@ for workspace in "$@"; do
   guard_workspace "$workspace"
 done
 
+# Match sbx's physical workspace path; a symlink would redirect the mount.
+primary_workspace=$(cd -P "${1%%:*}" && pwd)
+node_modules=$primary_workspace/node_modules
+[ ! -L "$node_modules" ] || fail "node_modules must not be a symlink: $node_modules"
+if [ -e "$node_modules" ] && [ ! -d "$node_modules" ]; then
+  fail "node_modules must be a directory: $node_modules"
+fi
+
 # sbx attaches a stored GitHub credential to every sandbox's GitHub requests
 # and forwards the host SSH agent; the kit cannot switch either off.
 if [ -z "${PI_SBX_ALLOW_EXPOSURE:-}" ]; then
@@ -170,7 +178,8 @@ echo "   OpenRouter: stored service secret present"
 "$kit/sync.sh"
 
 echo "== validating kit"
-sbx kit validate --offline "$kit" >/dev/null || fail "kit validation failed"
+sbx kit validate --offline --kit-arg "workspace=$primary_workspace" "$kit" >/dev/null ||
+  fail "kit validation failed"
 
 if [ -n "$exists" ]; then
   echo "== removing sandbox $name so the synced settings re-apply"
@@ -188,5 +197,6 @@ case $1 in
     ;;
 esac
 
+echo "== private node_modules volume: $node_modules"
 echo "== creating sandbox $name (sbx output follows)"
-exec sbx run --name "$name" "$kit" "$@"
+exec sbx run --name "$name" --kit-arg "workspace=$primary_workspace" "$kit" "$@"

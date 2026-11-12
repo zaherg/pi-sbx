@@ -54,6 +54,30 @@ bindings:
 Pi starts with `--approve`, and setup lets every npm install script run.
 Only mount projects and install packages whose code you trust to run inside the sandbox.
 
+### Project dependencies
+
+`run.sh` mounts a private, disk-backed volume over the primary workspace's root `node_modules` inside the VM.
+The host keeps its macOS dependencies; the VM installs its own Linux dependencies.
+Source files, manifests and lockfiles remain shared.
+
+At creation, setup installs project dependencies inside the VM as the agent user, after preparing the volume, tools and npm proxy settings:
+
+- `bun.lock` present: run `bun --no-env-file install`.
+- Otherwise, `package-lock.json` present: run `npm install`.
+- Neither present: skip project installation.
+
+Bun wins when both lockfiles exist, and an installation failure aborts setup.
+These commands can update shared lockfiles; install scripts can also write to shared project files.
+Installation does not run on reattach or restart; rerun it inside the VM after dependency changes.
+The volume survives stop/start, but `--fresh` discards it and installs dependencies again during creation.
+Existing sandboxes must be recreated to gain the volume; save any needed sandbox-only files before doing so.
+If the host has no `node_modules`, creation adds an empty mountpoint directory there, not the Linux packages.
+The launcher refuses a symlink or non-directory at that path, and setup refuses a mount that is not the expected private ext4 volume.
+
+Only the primary workspace's root `node_modules` is isolated.
+Additional workspaces, nested package directories and native build caches remain shared.
+Direct `sbx` callers must pass `--kit-arg workspace=<absolute-primary-workspace>`; the default `/home/agent/workspace` does not cover a host-mounted project.
+
 ### Safety checks
 
 `run.sh` refuses to create a sandbox, before it removes an old one, when:

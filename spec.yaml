@@ -6,6 +6,11 @@ description: >-
     pi coding agent with Claude and ChatGPT subscriptions plus OpenRouter,
     all proxy-managed.
 
+args:
+    workspace:
+        default: /home/agent/workspace
+        description: Absolute primary workspace path, supplied by run.sh
+
 # Inherits the pre-baked pi image (pi, node, fd, rolling nightly rebuilds).
 # The tag stays mutable on purpose: the rolling rebuilds are how pi updates.
 # Setup replaces the image's Node 22 with pinned Node 26 and installs Bun.
@@ -124,8 +129,27 @@ credentials:
                 header: Authorization
                 format: "Bearer %s"
 
+# Hide host-platform dependencies without hiding shared source files.
+environment:
+    variables:
+        PI_SBX_NODE_MODULES: "${{ kit.args.workspace }}/node_modules"
+
+volumes:
+    - path: "${{ kit.args.workspace }}/node_modules"
+
 setup:
     install:
+        # sbx v2 block volumes are ext4; refuse a host mount shadowing it.
+        - command: |
+              if ! mountpoint -q "$PI_SBX_NODE_MODULES" ||
+                [ "$(stat -f -c %T "$PI_SBX_NODE_MODULES")" != ext2/ext3 ]; then
+                  printf 'node_modules is not a private ext4 volume: %s\n' \
+                      "$PI_SBX_NODE_MODULES" >&2
+                  exit 1
+              fi
+              chown 1000:1000 "$PI_SBX_NODE_MODULES"
+          user: "0"
+          description: Prepare the private node_modules volume
         # Run as root at create time, so n and Node are pinned; bump together.
         - command: >-
               npm install --global n@11.0.0 && n 26.13.0 && node -e
@@ -167,3 +191,12 @@ setup:
               fi
           user: "1000"
           description: Point npm at the sandbox proxy in ~/.npmrc
+        - command: |
+              cd "${PI_SBX_NODE_MODULES%/node_modules}" || exit 1
+              if [ -f bun.lock ]; then
+                  bun --no-env-file install
+              elif [ -f package-lock.json ]; then
+                  npm install
+              fi
+          user: "1000"
+          description: Install project dependencies in the private volume
