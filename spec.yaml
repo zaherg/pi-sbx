@@ -35,7 +35,10 @@ permissions:
             - registry.npmjs.org
             - nodejs.org
             # git: packages in settings.json (github.com/zaherg/pi-extensions).
+            # release-assets.githubusercontent.com is where github.com release
+            # downloads (the rtk install below) redirect.
             - github.com
+            - release-assets.githubusercontent.com
             # serena MCP: sync.sh rewrites its uvx command to `uv tool run` (the
             # image has uv, not uvx), which installs it from git and PyPI.
             - raw.githubusercontent.com
@@ -134,6 +137,21 @@ setup:
               bun --version
           user: "0"
           description: Install the pinned Bun release
+        # Pinned like Node and Bun; the installer verifies the release
+        # checksum. /usr/local/bin is on every user's PATH (the installer's
+        # default ~/.local/bin is not).
+        - command: >-
+              curl -fsSL
+              https://raw.githubusercontent.com/rtk-ai/rtk/master/install.sh |
+              RTK_VERSION=v1.2.0 RTK_INSTALL_DIR=/usr/local/bin sh
+          user: "0"
+          description: Install the pinned rtk release
+        # Pairs the binary with the pi extension (sync.sh already bakes the
+        # host's stock extensions/rtk.ts into the kit, so this is normally a
+        # no-op or an in-place update of that known stock file).
+        - command: rtk init --agent pi --global
+          user: "1000"
+          description: Initialize rtk for pi
         # npm 11 skips dependency install scripts unless allowed; ignore-scripts
         # =false does not lift that.
         - command: >-

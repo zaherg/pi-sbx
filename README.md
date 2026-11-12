@@ -33,6 +33,7 @@ SANDBOX=name pi-sbx              # choose the sandbox name outright
 An existing sandbox is re-attached as it is, without syncing.
 Kit content, credentials and workspaces are fixed at creation, so use `--fresh` after changing settings.
 The first start takes a few minutes, because pi installs the packages listed in `settings.json`.
+Setup also installs the pinned [rtk](https://www.rtk-ai.app) binary and runs `rtk init --agent pi --global`, so the synced `extensions/rtk.ts` has its binary inside the sandbox.
 
 The first interactive create asks you to approve the ChatGPT login and the OpenRouter key.
 Detached creates withhold unapproved credentials, so approve interactively first or add the bindings to `~/.config/sbx/credentials.yaml` (mode `0600`):
@@ -108,7 +109,7 @@ Never commit `files/`: it is personal configuration.
 
 ## Network
 
-`spec.yaml` allows the model APIs, npm, GitHub, PyPI, and the hosts the MCP servers and web search use.
+`spec.yaml` allows the model APIs, npm, GitHub (including release assets, for the rtk install), PyPI, and the hosts the MCP servers and web search use.
 Anything else follows the local `sbx` policy.
 
 ## Local checks
@@ -152,7 +153,7 @@ GitHub runs the workflow on pushes to `main` and on pull requests.
 
 ## Known limits
 
-- The `rtk` extension prints one notice per start and disables itself; the `rtk` binary is not in the image.
+- Existing sandboxes keep the old kit content; recreate with `pi-sbx --fresh` to get the rtk binary.
 - `chrome-devtools` connects, but the image has no Chrome, so its browser tools fail when used.
 - Serena tries to reach `oraios-software.de`; that is blocked and Serena works without it.
 - Cloud sandboxes are not covered.
